@@ -13,17 +13,6 @@ const {
   DB_SYNC,
 } = process.env
 
-const dbConfig = {
-  user: DB_USERNAME,
-  password: DB_PASSWORD,
-  server: DB_HOST, // contoh: 'localhost'
-  database: DB_NAME,
-  options: {
-    // encrypt: true, // Gunakan jika Anda menghubungkan ke Azure SQL Database atau membutuhkan enkripsi
-    trustServerCertificate: true // Tambahkan opsi ini untuk menerima sertifikat self-signed
-  }
-};
-
 // Konfigurasi Knex untuk database MS SQL
 const knex = knexLib({
   client: 'mssql',
@@ -46,7 +35,7 @@ async function hitApiSO(url, body) {
       TOKEN
     } = process.env
 
-    let response = await axios.get(url, body, {
+    let response = await axios.post(url, body, {
       headers: {
         'Authorization': TOKEN,
       }
@@ -54,20 +43,21 @@ async function hitApiSO(url, body) {
 
     return response.status;
   } catch (err) {
-    console.error('API request error:', err);
+    console.error('API request error', err);
   }
 }
 
 // Contoh penggunaan
 async function main() {
   // Koneksi ke database dan menjalankan query
-  const query = `SELECT TOP 10 o.id, soj.body 
+  const query = `SELECT o.id, soj.body 
     FROM orders o
     LEFT JOIN sales_orders_jobs soj ON
     o.id = soj.order_id 
     WHERE 
     o.id = soj.order_id 
     AND soj.status = 2
+    AND o.status_so = 0
     AND o.created_at BETWEEN '2024-07-12 00:00:00' AND '2024-07-17 00:00:00';`;
 
     const data_so = await knex.raw(query);
@@ -75,18 +65,22 @@ async function main() {
 
     const apiUrl = process.env.API_URL;
     const batchSize = 5; // Ukuran batch untuk menghit API
-    const interval = 5000;
+    const interval = 0;
 
     // Mengelompokkan data menjadi batch
     for (let i = 0; i < data_so.length; i += batchSize) {
       const batch = data_so.slice(i, i + batchSize);
   
       // Mengumpulkan semua promise untuk permintaan API dalam batch
-      const apiPromises = batch.map(async (data) => {
-        const apiResponse = await hitApiSO(apiUrl, data.body);
+      const apiPromises = batch.map(async (data) => {        
+        console.log('trying hit API')
+        const apiResponse = await hitApiSO(apiUrl, JSON.parse(data.body));
 
         if(apiResponse == 201) {
-          console.log(apiResponse);
+          console.log(apiResponse, `SUCCESS`)
+          await knex('import.sales_orders_jobs_email').insert({order_id: data.id, status: 1});
+        } else {
+          console.log("error")
         }
       });
   
@@ -108,3 +102,4 @@ main().then((data) => {
   // Pastikan untuk menghancurkan koneksi Knex setelah selesai
   knex.destroy();
 });
+
